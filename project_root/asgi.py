@@ -17,6 +17,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'project_root.settings')
 django_asgi_app = get_asgi_application()
 
 import notifiation.routing
+import chatsystem.routing
 from .jwt_auth import TokenAuthMiddlewareStack
 
 application = ProtocolTypeRouter(
@@ -24,7 +25,8 @@ application = ProtocolTypeRouter(
         "http": django_asgi_app,
         "websocket": TokenAuthMiddlewareStack(
             URLRouter(
-                notifiation.routing.websocket_urlpatterns
+                notifiation.routing.websocket_urlpatterns +
+                chatsystem.routing.websocket_urlpatterns
             )
         ),
     }

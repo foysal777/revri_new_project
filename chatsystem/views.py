@@ -52,6 +52,7 @@ class MessageCreate(generics.CreateAPIView):
     def create(self, request, *args, **kwargs):
         room_id = request.data.get('room')
         message_text = str(request.data.get('message', '')).strip()
+        # print("user Message", message_text )
         if not message_text:
             return Response({"detail": "Message text is required."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -68,6 +69,8 @@ class MessageCreate(generics.CreateAPIView):
             )
 
         result = ai_module.handle_message(message_text)
+
+        # print("ai response",result)
         if isinstance(result, dict) and isinstance(result.get('results'), list):
             for item in result['results']:
                 image = item.get('image')
@@ -83,12 +86,7 @@ class MessageCreate(generics.CreateAPIView):
                     except Exception:
                         pass
 
-        if result.get('blocked'):
-            stored_ai_response = result.get('reply', '')
-        elif result.get('answer') and not isinstance(result.get('answer'), dict):
-            stored_ai_response = result.get('answer')
-        else:
-            stored_ai_response = json.dumps(result)
+        stored_ai_response = json.dumps(result)
 
         message = models.Message.objects.create(
             room=room,
@@ -97,11 +95,24 @@ class MessageCreate(generics.CreateAPIView):
             ai_response=stored_ai_response,
         )
 
-        return Response({
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+        
+        response_data = {
             "message": serializers.MessageSerializer(message, context={"request": request}).data,
-            "ai_response": result,
-            "result": result,
-        }, status=status.HTTP_201_CREATED)
+        }
+
+        channel_layer = get_channel_layer()
+        if channel_layer and room:
+            async_to_sync(channel_layer.group_send)(
+                f"chat_{room.id}",
+                {
+                    "type": "chat_message",
+                    "message": response_data["message"]
+                }
+            )
+
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
 
 class RoomDeleteView(generics.CreateAPIView):
