@@ -1,0 +1,147 @@
+{
+    "plans": [
+        {
+            "id": 1,
+            "created_at": "2026-06-27T04:21:17.276Z",
+            "updated_at": "2026-06-27T04:27:35.797Z",
+            "name": "FREE",
+            "plantype": "free",
+            "price": "0.00",
+            "questions_per_month": 5,
+            "stripe_price_id": "price_1TmnoDCYm1JPMqCwbU9mto9O",
+            "billing_cycle": "Monthly",
+            "badge": null,
+            "is_active": true,
+            "features": [
+                "Feature 1",
+                "Feature 2",
+                "Feature 3"
+            ]
+        },
+        {
+            "id": 2,
+            "created_at": "2026-06-27T04:22:09.140Z",
+            "updated_at": "2026-06-27T09:25:02.342Z",
+            "name": "CORE",
+            "plantype": "core",
+            "price": "290.00",
+            "questions_per_month": 30,
+            "stripe_price_id": "price_1TmruACYm1JPMqCwqK7CQndE",
+            "billing_cycle": "Yearly",
+            "badge": null,
+            "is_active": true,
+            "features": [
+                {
+                    "name": "Feature test",
+                    "is_active": true
+                },
+                {
+                    "name": "Feature 2",
+                    "is_active": true
+                },
+                {
+                    "name": "Feature 3",
+                    "is_active": true
+                }
+            ]
+        },
+        {
+            "id": 3,
+            "created_at": "2026-06-27T04:22:58.972Z",
+            "updated_at": "2026-06-27T04:28:37.447Z",
+            "name": "BUILDER",
+            "plantype": "builder",
+            "price": "79.00",
+            "questions_per_month": 75,
+            "stripe_price_id": "price_1Tmnp7CYm1JPMqCwOpemrnSN",
+            "billing_cycle": "Monthly",
+            "badge": null,
+            "is_active": true,
+            "features": [
+                "Feature 1",
+                "Feature 2",
+                "Feature 3"
+            ]
+        },
+        {
+            "id": 4,
+            "created_at": "2026-06-27T04:23:47.950Z",
+            "updated_at": "2026-06-27T04:29:00.007Z",
+            "name": "ANCHOR",
+            "plantype": "anchor",
+            "price": "149.00",
+            "questions_per_month": -1,
+            "stripe_price_id": "price_1TmnpTCYm1JPMqCwbmj6OK9T",
+            "billing_cycle": "Monthly",
+            "badge": null,
+            "is_active": true,
+            "features": [
+                "Feature 1",
+                "Feature 2",
+                "Feature 3"
+            ]
+        }
+    ],
+    "products": [
+        {
+            "id": 1,
+            "created_at": "2026-06-27T09:01:46.559Z",
+            "updated_at": "2026-06-27T09:01:46.560Z",
+            "name": "test product 1",
+            "product_type": "resource",
+            "link": "https://www.daraz.com.bd/products/-i1584825569-s12685785091.html",
+            "description": "We believe this offer will provide you with the best value and meet your expectations. Please let us know if you would like to proceed or if you need any further information. Looking forward to your response.",
+            "is_published": true,
+            "product_price": "25.00",
+            "product_image": "products/black.jpg"
+        },
+        {
+            "id": 2,
+            "created_at": "2026-06-27T09:02:42.725Z",
+            "updated_at": "2026-06-27T09:02:42.725Z",
+            "name": "test product 2",
+            "product_type": "ecommerce",
+            "link": "https://www.daraz.com.bd/products/hero-karizma-xmr-i538773303-s2554504620.html",
+            "description": "We believe this offer will provide you with the best value and meet your expectations. Please let us know if you would like to proceed or if you need any further information. Looking forward to your response.",
+            "is_published": true,
+            "product_price": "50000.00",
+            "product_image": "products/image_1.jpg"
+        },
+        {
+            "id": 3,
+            "created_at": "2026-06-27T09:05:51.384Z",
+            "updated_at": "2026-06-27T09:05:51.384Z",
+            "name": "test product 3",
+            "product_type": "consultancy",
+            "link": "https://www.daraz.com.bd/products/hero-karizma-xmr-i538773303-s2554504620.html",
+            "description": "We believe this offer will provide you with the best value and meet your expectations. Please let us know if you would like to proceed or if you need any further information. Looking forward to your response.",
+            "is_published": true,
+            "product_price": "3000.00",
+            "product_image": "products/_100058428_mediaitem100058424.jpg"
+        },
+        {
+            "id": 4,
+            "created_at": "2026-06-27T09:28:39.235Z",
+            "updated_at": "2026-06-27T09:28:39.235Z",
+            "name": "test product 4",
+            "product_type": "resource",
+            "link": "https://www.daraz.com.bd/products/-i1584825569-s12685785091.html",
+            "description": "We believe this offer will provide you with the best value and meet your expectations. Please let us know if you would like to proceed or if you need any further information. Looking forward to your response.",
+            "is_published": true,
+            "product_price": "100.00",
+            "product_image": "products/Auralis_Medical_AI_App.png"
+        },
+        {
+            "id": 5,
+            "created_at": "2026-06-27T09:58:10.762Z",
+            "updated_at": "2026-06-27T09:58:10.762Z",
+            "name": "bike",
+            "product_type": "ecommerce",
+            "link": "https://www.daraz.com.bd/products/name-sticker-for-bike-motorcyclecar-bike-modify-sticker-name-sticker-i268315530-s1311038951.html",
+            "description": "fddsafsfg",
+            "is_published": true,
+            "product_price": "500.00",
+            "product_image": "products/eye.jpg"
+        }
+    ]
+}

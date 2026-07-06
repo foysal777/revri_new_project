@@ -1,0 +1,24 @@
+venvv/
+.env
+
+venv
+
+.gitignore copy
+
+__pycache__/
+
+*.sqlite3
+*1db.sqlite3
+
+staticfiles/
+static/
+
+media/*
+!media/.gitkeep
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
