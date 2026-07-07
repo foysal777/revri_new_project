@@ -301,8 +301,8 @@ class HandleMessageTests(APITestCase):
         )
         result = handle_message("something")
         self.assertEqual(result.get('intent'), 'clarification_needed')
-        self.assertIn('reply', result)
-        self.assertIn('What type', result['reply'])
+        self.assertIn('answer', result)
+        self.assertIn('What type', result['answer'])
 
     @patch('chatsystem.ai.openai_client')
     def test_product_search_route(self, mock_oc):
@@ -464,7 +464,7 @@ class APIIntegrationTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         ai = resp.data['ai_response']
         self.assertEqual(ai.get('intent'), 'clarification_needed')
-        self.assertIn('reply', ai)
+        self.assertIn('answer', ai)
 
     @patch('chatsystem.ai.openai_client')
     def test_send_message_general_question(self, mock_oc):
@@ -495,7 +495,7 @@ class APIIntegrationTests(APITestCase):
     def test_send_message_persists_to_db(self):
         """Sent messages should be saved to the Message model."""
         with patch('chatsystem.ai.openai_client') as mock_oc:
-            self._mock_openai(mock_oc, intent="general_question", answer="AI reply here")
+            self._mock_openai(mock_oc, intent="general_question", answer="AI answer here")
             url = reverse('send-message')
             self.client.post(url, {'message': 'Test persistence'}, format='json')
         self.assertTrue(Message.objects.filter(message='Test persistence').exists())

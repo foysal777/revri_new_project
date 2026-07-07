@@ -831,7 +831,7 @@ def handle_message(
             "blocked": True,
             "matched": matched,
             "count": len(matched),
-            "reply": f"Your message contains restricted words: {', '.join(matched)}. Please rephrase.",
+            "answer": f"Your message contains restricted words: {', '.join(matched)}. Please rephrase.",
         }
 
     # Parse topK
@@ -869,7 +869,7 @@ def handle_message(
         increment_query_counts(ai_setting, success=True)
         return {
             "intent": "clarification_needed",
-            "reply": clarification_q,
+            "answer": clarification_q,
             "source": "clarification",
         }
 
@@ -949,7 +949,7 @@ def handle_message(
 
     if not result.get("error") and not result.get("blocked"):
         increment_query_counts(ai_setting, success=True)
-        response_text = result.get("answer") or result.get("reply") or json.dumps(result)
+        response_text = result.get("answer") or result.get("answer") or json.dumps(result)
         save_query_log(message, response_text=response_text, is_blocked=False)
 
     return result
