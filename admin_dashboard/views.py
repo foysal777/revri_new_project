@@ -21,7 +21,7 @@ class ProductListView(generics.ListAPIView):
     queryset = models.Product.objects.all()
     serializer_class = serializers.ProductSerializer
     permission_classes = [permissions.AllowAny]
-    pagination_class = pagination.CustomPagination
+    pagination_class = None
     filter_backends = [filters.DjangoFilterBackend]
 
 

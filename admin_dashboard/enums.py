@@ -2,8 +2,8 @@ from enum import Enum
 
 class ProductType(Enum):
     RESOURCE = 'resource'
-    CONSULTANCY = 'consultancy'
-    ECOMMERCE = 'ecommerce'
+    SERVICES = 'services'
+    ASSESSMENT = 'assessment'
 
     @classmethod
     def choices(cls):
