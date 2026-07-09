@@ -28,6 +28,7 @@ urlpatterns = [
     path('send-message/', chatsystem_views.MessageCreate.as_view(), name='send-message'),
     path('chat-details/<int:room_id>/', chatsystem_views.ChatDetails.as_view(), name='chat-details'),
     path('delete-message/<int:id>/', chatsystem_views.MessageDelete.as_view(), name='delete-message'),
+    path('delete-chat-room/<int:id>/', chatsystem_views.RoomDeleteView.as_view(), name='delete-chat-room'),
 
     path('ai-settings/', chatsystem_views.AiSettingsView.as_view(), name='ai-settings'),
 

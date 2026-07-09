@@ -3,9 +3,17 @@ from rest_framework import serializers
 from . import models
 
 class ChatRoomSerializer(serializers.ModelSerializer):
+    name = serializers.SerializerMethodField()
+
     class Meta:
         model = models.ChatRoom
         fields = ['id', 'name', 'human', 'ai_response']
+
+    def get_name(self, obj):
+        first_msg = obj.messages.filter(is_deleted=False).order_by('created_at').first()
+        if first_msg:
+            return first_msg.message
+        return obj.name
 
 
 class MessageSerializer(serializers.ModelSerializer):
