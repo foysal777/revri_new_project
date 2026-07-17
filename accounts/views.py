@@ -364,3 +364,83 @@ def block_user_view(request, id):
         fail_silently=True,
     )
     return success_response(message="User blocked successfully.", status_code=status.HTTP_201_CREATED)
+
+
+@extend_schema(
+    responses={200: OpenApiResponse(description="User account overview retrieved successfully.")},
+    tags=['User Profile']
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def account_overview_view(request):
+    user = request.user
+    
+    # 1. Role: Map userole database value to display value
+    role_mapping = {
+        'admin': 'Admin',
+        'normal': 'Normal'
+    }
+    role_display = role_mapping.get(getattr(user, 'userole', None), 'N/A')
+    
+    # 2. Verified: Yes / No
+    verified_display = 'Yes' if getattr(user, 'is_verified', False) else 'No'
+    
+    # 3. Plan & Queries limit:
+    from plan.models import UserSubscription, Plans
+    
+    active_sub = UserSubscription.objects.filter(user=user, status='active').order_by('-start_date').first()
+    if active_sub and active_sub.plan:
+        plan_display = active_sub.plan.name
+        limit = active_sub.plan.questions_per_month
+    else:
+        plantype = getattr(user, 'plantype', None)
+        db_plan = Plans.objects.filter(plantype=plantype, is_active=True).order_by('-updated_at').first()
+        if db_plan:
+            plan_display = db_plan.name
+            limit = db_plan.questions_per_month
+        else:
+            if plantype:
+                plan_display = plantype.title()
+                LIMIT_MAPPING = {
+                    'free': 5,
+                    'core': 30,
+                    'builder': 75,
+                    'anchor': -1,
+                }
+                limit = LIMIT_MAPPING.get(plantype, None)
+            else:
+                plan_display = 'None'
+                limit = None
+
+    if plan_display == 'None' or not plan_display:
+        plan_display = 'None'
+        limit_display = '—'
+    else:
+        if limit == -1:
+            limit_display = 'Unlimited'
+        elif limit is None:
+            limit_display = '—'
+        else:
+            from chatsystem.models import Message
+            from django.utils import timezone
+            import datetime
+            
+            now = timezone.now()
+            start_of_month = datetime.datetime(now.year, now.month, 1, tzinfo=now.tzinfo)
+            sent_count = Message.objects.filter(
+                sender=user,
+                is_deleted=False,
+                created_at__gte=start_of_month
+            ).count()
+            
+            remaining = max(0, limit - sent_count)
+            limit_display = f"{remaining}/{limit}"
+            
+    data = {
+        'role': role_display,
+        'verified': verified_display,
+        'plan': plan_display,
+        'queries_limit': limit_display
+    }
+    
+    return success_response(data=data, message="Account overview retrieved successfully.")

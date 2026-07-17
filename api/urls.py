@@ -18,6 +18,7 @@ from accounts.views import (
     google_login_view,
     report_user_view,
     block_user_view,
+    account_overview_view,
 )
 from plan import views as plan_views
 
@@ -74,6 +75,7 @@ urlpatterns = [
 
     # User Profile
     path('profile/', user_profile_view, name='profile'),
+    path('account-overview/', account_overview_view, name='account-overview'),
 
     path('admin-user-list/', AdminUserList.as_view(), name='admin-user-list'),
 

@@ -56,6 +56,50 @@ class MessageCreate(generics.CreateAPIView):
         if not message_text:
             return Response({"detail": "Message text is required."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Check monthly question limit based on subscription plan
+        from plan.models import UserSubscription, Plans
+        from django.utils import timezone
+        import datetime
+
+        user = request.user
+        limit = None
+        plantype = getattr(user, 'plantype', 'free')
+
+        # 1. Look for active UserSubscription
+        active_sub = UserSubscription.objects.filter(user=user, status='active').order_by('-start_date').first()
+        if active_sub and active_sub.plan:
+            limit = active_sub.plan.questions_per_month
+        else:
+            # 2. Fall back to Plans in DB for user's plantype
+            db_plan = Plans.objects.filter(plantype=plantype, is_active=True).order_by('-updated_at').first()
+            if db_plan:
+                limit = db_plan.questions_per_month
+            else:
+                # 3. Fall back to hardcoded defaults
+                LIMIT_MAPPING = {
+                    'free': 5,
+                    'core': 30,
+                    'builder': 75,
+                    'anchor': -1,
+                    'premium': 1000,
+                }
+                limit = LIMIT_MAPPING.get(plantype, 5)
+
+        if limit != -1:
+            now = timezone.now()
+            start_of_month = datetime.datetime(now.year, now.month, 1, tzinfo=now.tzinfo)
+            sent_count = models.Message.objects.filter(
+                sender=user,
+                is_deleted=False,
+                created_at__gte=start_of_month
+            ).count()
+
+            if sent_count >= limit:
+                return Response(
+                    {"detail": f"You have reached your monthly question limit of {limit} questions. Please upgrade your plan to continue."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
         room = None
         if room_id:
             try:

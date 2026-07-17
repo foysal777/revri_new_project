@@ -239,7 +239,10 @@ def build_ai_prompt(
 
     if pdf_chunks:
         system_messages.append(
-            'Use the following PDF knowledge context to answer the user query. Only use the PDF information when it is relevant and helpful.'
+            'Use the following knowledge base context to answer the user query. Only use this information when it is relevant and helpful.'
+        )
+        system_messages.append(
+            'CRITICAL: Do not mention "PDF", "provided PDF", "provided document", "provided context", "context", "source", "document", or similar terms in your response. Answer naturally as if this is your own knowledge. If the provided context does not contain the answer, answer the user query generally or politely state that you do not have that information, without referencing any document, context, or PDF.'
         )
         for idx, chunk in enumerate(pdf_chunks, start=1):
             system_messages.append(f'Section {idx}: {chunk.get("content", "")}')
@@ -353,7 +356,7 @@ def build_rag_prompt(query: str, context_chunks: List[Dict[str, Any]], tone: str
     else:
         length_hint = "Provide a moderate response (2-3 sentences)."
 
-    return f"""You are a helpful AI assistant. Use the provided context to answer the user's query.
+    return f"""You are a helpful AI assistant. Use the provided context to answer the user's query. Do not refer to "context", "provided text", "provided context", "source", "document", "PDF", or similar terms in your response. Answer naturally as if you already have this knowledge. If the context does not contain the answer, answer generally or politely state that you do not have that information, without mentioning any document, context, or PDF.
 
 {tone_hint}
 {length_hint}
@@ -791,6 +794,25 @@ def _is_product_intent(message: str) -> bool:
     return any(tok in lower for tok in indicators)
 
 
+def clean_response_text(text: str) -> str:
+    if not text or not isinstance(text, str):
+        return text
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    text = text.strip()
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    lines = [re.sub(r' {2,}', ' ', line.strip()) for line in text.split('\n')]
+    cleaned_lines = []
+    for line in lines:
+        if line != "":
+            cleaned_lines.append(line)
+        else:
+            if cleaned_lines and cleaned_lines[-1] != "":
+                cleaned_lines.append("")
+    if cleaned_lines and cleaned_lines[-1] == "":
+        cleaned_lines.pop()
+    return '\n\n'.join(cleaned_lines)
+
+
 def handle_message(
     message: str,
     client_message: Optional[str] = None,
@@ -900,15 +922,22 @@ def handle_message(
                         for t in conversation_history[-4:]
                     ])
 
+                history_section = (
+                    f"Conversation so far:\n{history_ctx}\n"
+                    if history_ctx
+                    else ""
+                )
+
                 summary_prompt = (
-                    f"You are a helpful assistant for a Black church resource marketplace.\n"
-                    f"{'Conversation so far:\n' + history_ctx + chr(10) if history_ctx else ''}"
+                    "You are a helpful assistant for a Black church resource marketplace.\n"
+                    f"{history_section}"
                     f"The user asked: {message}\n\n"
                     f"Based on their request, here are the top matching products:\n{product_list}\n\n"
-                    f"Write a warm, concise 2-3 sentence response introducing these results. "
-                    f"Mention what they have in common with the user's need. "
-                    f"Do not list every product — the UI will show them. End with an offer to refine."
+                    "Write a warm, concise 2-3 sentence response introducing these results. "
+                    "Mention what they have in common with the user's need. "
+                    "Do not list every product — the UI will show them. End with an offer to refine."
                 )
+                
                 summary_resp = openai_client.chat.completions.create(
                     model=CHAT_MODEL,
                     messages=[{"role": "user", "content": summary_prompt}],
@@ -947,9 +976,12 @@ def handle_message(
         elif result.get("source") is None:
             result["source"] = "direct_ai"
 
+    if "answer" in result and isinstance(result["answer"], str):
+        result["answer"] = clean_response_text(result["answer"])
+
     if not result.get("error") and not result.get("blocked"):
         increment_query_counts(ai_setting, success=True)
-        response_text = result.get("answer") or result.get("answer") or json.dumps(result)
+        response_text = result.get("answer") or json.dumps(result)
         save_query_log(message, response_text=response_text, is_blocked=False)
 
     return result

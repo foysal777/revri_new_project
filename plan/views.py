@@ -111,6 +111,15 @@ class CreateCheckoutSessionView(APIView):
             if not plan.stripe_price_id:
                 return Response({'error': 'This plan does not have a valid Stripe price ID.'}, status=status.HTTP_400_BAD_REQUEST)
 
+            # Prevent purchasing if the user has an active non-free subscription
+            from .models import UserSubscription
+            active_sub = UserSubscription.objects.filter(user=request.user, status='active').exclude(plan__plantype__iexact='free').exists()
+            if active_sub:
+                return Response(
+                    {'error': 'You already have an active subscription. You cannot purchase another plan until your current subscription ends.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             success_url = request.data.get('success_url', os.getenv("PAYMENT_SUCCESS_URL", "http://localhost:3000/payment-success"))
             cancel_url = request.data.get('cancel_url', os.getenv("PAYMENT_CANCEL_URL", "http://localhost:3000/payment-cancel"))
 
@@ -240,7 +249,10 @@ class UserCurrentPlanView(APIView):
             "current_plan": user.plantype,
             "plan_details": None,
             "status": "inactive",
-            "end_date": None
+            "start_date": None,
+            "end_date": None,
+            "expire_date": None,
+            "next_billing_date": None
         }
         
         try:
@@ -250,6 +262,7 @@ class UserCurrentPlanView(APIView):
             
             if active_sub and active_sub.plan:
                 plan = active_sub.plan
+                response_data["current_plan"] = plan.plantype
                 response_data["plan_details"] = {
                     "name": plan.name,
                     "price": plan.price,
@@ -258,20 +271,50 @@ class UserCurrentPlanView(APIView):
                     "features": plan.features
                 }
                 response_data["status"] = active_sub.status
+                response_data["start_date"] = active_sub.start_date.isoformat() if active_sub.start_date else None
                 
                 # Fetch end date from Stripe if available
+                end_date_str = None
                 if active_sub.stripe_subscription_id:
                     import stripe
                     try:
                         stripe_sub = stripe.Subscription.retrieve(active_sub.stripe_subscription_id)
                         from datetime import datetime
                         current_period_end = datetime.fromtimestamp(stripe_sub.current_period_end)
-                        response_data["end_date"] = current_period_end.isoformat()
+                        end_date_str = current_period_end.isoformat()
                         
                         if stripe_sub.cancel_at_period_end:
                             response_data["status"] = "cancels_at_period_end"
                     except Exception:
-                        response_data["end_date"] = active_sub.end_date.isoformat() if active_sub.end_date else None
+                        end_date_str = active_sub.end_date.isoformat() if active_sub.end_date else None
+                else:
+                    end_date_str = active_sub.end_date.isoformat() if active_sub.end_date else None
+
+                # Fallback: calculate dynamically based on start_date + 1 month if end_date_str is still null
+                if not end_date_str:
+                    from django.utils import timezone
+                    import datetime
+                    import calendar
+                    
+                    ref_date = active_sub.start_date or timezone.now()
+                    if ref_date.month == 12:
+                        next_billing_dt = datetime.datetime(ref_date.year + 1, 1, ref_date.day, tzinfo=ref_date.tzinfo)
+                    else:
+                        next_month_num = ref_date.month + 1
+                        _, max_days = calendar.monthrange(ref_date.year, next_month_num)
+                        next_day = min(ref_date.day, max_days)
+                        next_billing_dt = datetime.datetime(ref_date.year, next_month_num, next_day, tzinfo=ref_date.tzinfo)
+                    
+                    end_date_str = next_billing_dt.isoformat()
+
+                response_data["end_date"] = end_date_str
+                response_data["expire_date"] = end_date_str
+                
+                # Next billing date is the same as the end date if the subscription is not set to cancel
+                if response_data["status"] not in ["cancelled", "cancels_at_period_end"]:
+                    response_data["next_billing_date"] = end_date_str
+                else:
+                    response_data["next_billing_date"] = None
             else:
                 free_plan = Plans.objects.filter(plantype__iexact='free').first()
                 if free_plan:
@@ -283,6 +326,62 @@ class UserCurrentPlanView(APIView):
                         "features": free_plan.features
                     }
                 response_data["status"] = "active" # Free is always active
+                
+                # Set dynamic monthly cycle dates for the free plan
+                from django.utils import timezone
+                import datetime
+                
+                now = timezone.now()
+                start_of_month = datetime.datetime(now.year, now.month, 1, tzinfo=now.tzinfo)
+                if now.month == 12:
+                    next_month = datetime.datetime(now.year + 1, 1, 1, tzinfo=now.tzinfo)
+                else:
+                    next_month = datetime.datetime(now.year, now.month + 1, 1, tzinfo=now.tzinfo)
+                
+                response_data["start_date"] = start_of_month.isoformat()
+                response_data["end_date"] = next_month.isoformat()
+                response_data["expire_date"] = next_month.isoformat()
+                response_data["next_billing_date"] = next_month.isoformat()
+
+            # Calculate user's monthly query limit and usage stats
+            limit = None
+            plan_details = response_data.get("plan_details")
+            if plan_details:
+                limit = plan_details.get("questions_per_month")
+            else:
+                plantype = getattr(user, 'plantype', 'free')
+                LIMIT_MAPPING = {
+                    'free': 5,
+                    'core': 30,
+                    'builder': 75,
+                    'anchor': -1,
+                }
+                limit = LIMIT_MAPPING.get(plantype, 5)
+
+            from chatsystem.models import Message
+            from django.utils import timezone
+            import datetime
+            
+            now = timezone.now()
+            start_of_month = datetime.datetime(now.year, now.month, 1, tzinfo=now.tzinfo)
+            sent_count = Message.objects.filter(
+                sender=user,
+                is_deleted=False,
+                created_at__gte=start_of_month
+            ).count()
+
+            if limit == -1:
+                remaining = "Unlimited"
+                total = "Unlimited"
+            else:
+                remaining = max(0, limit - sent_count)
+                total = limit
+
+            response_data["usage"] = {
+                "used_questions": sent_count,
+                "remaining_questions": remaining,
+                "total_questions": total
+            }
                 
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

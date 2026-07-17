@@ -4,8 +4,8 @@ set -e
 echo "Running migrations..."
 python manage.py migrate --noinput
 
-echo "Creating admin user..."
-bash admin-create.sh
+# echo "Creating admin user..."
+# bash admin-create.sh
 
 echo "Collecting static files..."
 python manage.py collectstatic --noinput

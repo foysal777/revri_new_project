@@ -473,6 +473,25 @@ class APIIntegrationTests(APITestCase):
         resp = self.client.post(url, {'message': 'Tell me about BMC'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
 
+    @patch('chatsystem.ai.openai_client')
+    def test_send_message_exceeds_limit(self, mock_oc):
+        # Configure user to have 'free' plantype and limit to 5
+        self.user.plantype = 'free'
+        self.user.save()
+        self.free_plan.questions_per_month = 5
+        self.free_plan.save()
+
+        # Create 5 existing messages for the current month
+        room = ChatRoom.objects.create(human=self.user, name="Test Room")
+        for i in range(5):
+            Message.objects.create(room=room, sender=self.user, message=f"query {i}", ai_response="{}")
+
+        # The 6th message should fail
+        url = reverse('send-message')
+        resp = self.client.post(url, {'message': 'Should fail'}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("reached your monthly question limit", resp.data["detail"])
+
     @override_settings(AI_BLOCKED_KEYWORDS=['badword'])
     def test_send_message_blocked(self):
         url = reverse('send-message')
@@ -510,8 +529,32 @@ class APIIntegrationTests(APITestCase):
     # ── user-current-plan ──
     def test_user_current_plan(self):
         url = reverse('user-current-plan')
+        
+        # 1. Test Free default
         resp = self.client.get(url)
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["current_plan"], "free")
+        self.assertIsNotNone(resp.data["start_date"])
+        self.assertIsNotNone(resp.data["expire_date"])
+        self.assertIsNotNone(resp.data["next_billing_date"])
+        self.assertIn("usage", resp.data)
+        self.assertIn("used_questions", resp.data["usage"])
+        self.assertIn("remaining_questions", resp.data["usage"])
+        self.assertIn("total_questions", resp.data["usage"])
+
+        # 2. Test Paid subscription fallback calculation
+        UserSubscription.objects.create(
+            user=self.user,
+            plan=self.premium_plan,
+            stripe_subscription_id="sub_test_current",
+            status="active"
+        )
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["current_plan"], self.premium_plan.plantype)
+        self.assertIsNotNone(resp.data["start_date"])
+        self.assertIsNotNone(resp.data["expire_date"])
+        self.assertIsNotNone(resp.data["next_billing_date"])
 
     # ── report & block user ──
     def test_report_user(self):
@@ -540,6 +583,38 @@ class APIIntegrationTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertIn('checkout_url', resp.data)
 
+    @patch('stripe.checkout.Session.create')
+    def test_create_checkout_session_rejected_if_active(self, mock_stripe):
+        # Create active non-free subscription for self.user
+        UserSubscription.objects.create(
+            user=self.user,
+            plan=self.premium_plan,
+            stripe_subscription_id="sub_test",
+            status="active"
+        )
+        url = reverse('create-checkout-session')
+        resp = self.client.post(url, {'plan_id': self.premium_plan.id}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("already have an active subscription", resp.data["error"])
+
+    @patch('stripe.checkout.Session.create')
+    def test_create_checkout_session_allowed_if_free_plan(self, mock_stripe):
+        # Create active free subscription for self.user
+        UserSubscription.objects.create(
+            user=self.user,
+            plan=self.free_plan,
+            stripe_subscription_id="sub_free",
+            status="active"
+        )
+        mock_session = MagicMock()
+        mock_session.url = 'https://checkout.stripe.com/test_url'
+        mock_stripe.return_value = mock_session
+
+        url = reverse('create-checkout-session')
+        resp = self.client.post(url, {'plan_id': self.premium_plan.id}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn('checkout_url', resp.data)
+
     @patch('stripe.Product.create')
     @patch('stripe.Price.create')
     def test_plan_update_syncs_stripe(self, mock_price, mock_product):
@@ -550,3 +625,38 @@ class APIIntegrationTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.premium_plan.refresh_from_db()
         self.assertEqual(float(self.premium_plan.price), 45.00)
+
+    def test_account_overview(self):
+        # 1. With free plan
+        self.user.userole = 'normal'
+        self.user.is_verified = True
+        self.user.plantype = 'free'
+        self.user.save()
+        
+        # Configure free plan limit to 5
+        self.free_plan.questions_per_month = 5
+        self.free_plan.save()
+        
+        url = reverse('account-overview')
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data['data']['role'], 'Normal')
+        self.assertEqual(resp.data['data']['verified'], 'Yes')
+        self.assertEqual(resp.data['data']['plan'], 'Free')
+        self.assertEqual(resp.data['data']['queries_limit'], '5/5')
+
+        # Create 2 messages to reduce remaining questions
+        room = ChatRoom.objects.create(human=self.user, name="Test Room")
+        Message.objects.create(room=room, sender=self.user, message="query 1", ai_response="{}")
+        Message.objects.create(room=room, sender=self.user, message="query 2", ai_response="{}")
+
+        resp = self.client.get(url)
+        self.assertEqual(resp.data['data']['queries_limit'], '3/5')
+
+        # 2. With plantype = None (None / —)
+        self.user.plantype = None
+        self.user.save()
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data['data']['plan'], 'None')
+        self.assertEqual(resp.data['data']['queries_limit'], '—')
