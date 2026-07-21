@@ -810,7 +810,34 @@ def clean_response_text(text: str) -> str:
                 cleaned_lines.append("")
     if cleaned_lines and cleaned_lines[-1] == "":
         cleaned_lines.pop()
-    return '\n\n'.join(cleaned_lines)
+
+    # Decrease gap between consecutive list items or bold headers
+    def is_list_item(line_str: str) -> bool:
+        cleaned = line_str.strip()
+        if not cleaned:
+            return False
+        if cleaned.startswith(('*', '-', '+')):
+            if len(cleaned) == 1 or cleaned[1].isspace():
+                return True
+        if re.match(r'^\d+\.\s', cleaned):
+            return True
+        if cleaned.startswith('**') and '**' in cleaned[2:]:
+            bold_end = cleaned.find('**', 2)
+            if bold_end != -1 and bold_end < 60:
+                return True
+        return False
+
+    i = 1
+    while i < len(cleaned_lines) - 1:
+        if cleaned_lines[i] == "":
+            prev_line = cleaned_lines[i-1]
+            next_line = cleaned_lines[i+1]
+            if is_list_item(prev_line) and is_list_item(next_line):
+                cleaned_lines.pop(i)
+                continue
+        i += 1
+
+    return '\n'.join(cleaned_lines)
 
 
 def handle_message(

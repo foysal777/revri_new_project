@@ -28,6 +28,7 @@ from chatsystem.ai import (
     _classify_query_intent,
     handle_message,
     _is_product_intent,
+    clean_response_text,
 )
 from plan.models import Plans, UserSubscription
 
@@ -104,6 +105,23 @@ class AIUtilTests(APITestCase):
 
     def test_is_product_intent_greeting(self):
         self.assertFalse(_is_product_intent("hello, how are you?"))
+
+    # clean_response_text spacing test
+    def test_clean_response_text_spacing(self):
+        text = "Hello World\n\n\n\nHow are you?\n\nFine."
+        # Should clean multiple blank lines to exactly one blank line
+        cleaned = clean_response_text(text)
+        self.assertEqual(cleaned, "Hello World\n\nHow are you?\n\nFine.")
+
+        # Test bullet points list (should have no empty line between items)
+        list_text = "* Point 1\n\n* Point 2\n\n* Point 3"
+        cleaned_list = clean_response_text(list_text)
+        self.assertEqual(cleaned_list, "* Point 1\n* Point 2\n* Point 3")
+
+        # Test bold headers list (should have no empty line between items)
+        bold_text = "**Title 1**: text\n\n**Title 2**: text"
+        cleaned_bold = clean_response_text(bold_text)
+        self.assertEqual(cleaned_bold, "**Title 1**: text\n**Title 2**: text")
 
 
 # ─────────────────────────────────────────────
@@ -555,6 +573,17 @@ class APIIntegrationTests(APITestCase):
         self.assertIsNotNone(resp.data["start_date"])
         self.assertIsNotNone(resp.data["expire_date"])
         self.assertIsNotNone(resp.data["next_billing_date"])
+
+        # 3. Test Cancelled subscription
+        sub = UserSubscription.objects.get(stripe_subscription_id="sub_test_current")
+        sub.status = "cancelled"
+        sub.save()
+        
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["current_plan"], "free")
+        self.assertEqual(resp.data["status"], "cancel")
+        self.assertIsNone(resp.data["next_billing_date"])
 
     # ── report & block user ──
     def test_report_user(self):

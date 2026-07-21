@@ -257,12 +257,18 @@ class UserCurrentPlanView(APIView):
         
         try:
             from .models import UserSubscription, Plans
-            # Fetch active subscription from DB
-            active_sub = UserSubscription.objects.filter(user=user, status='active').order_by('-start_date').first()
+            # Fetch active or cancelled subscription from DB
+            active_sub = UserSubscription.objects.filter(user=user, status__in=['active', 'cancelled']).order_by('-start_date').first()
             
             if active_sub and active_sub.plan:
                 plan = active_sub.plan
-                response_data["current_plan"] = plan.plantype
+                if active_sub.status == 'cancelled':
+                    response_data["current_plan"] = "free"
+                    response_data["status"] = "cancel"
+                else:
+                    response_data["current_plan"] = plan.plantype
+                    response_data["status"] = active_sub.status
+
                 response_data["plan_details"] = {
                     "name": plan.name,
                     "price": plan.price,
@@ -270,7 +276,6 @@ class UserCurrentPlanView(APIView):
                     "questions_per_month": plan.questions_per_month,
                     "features": plan.features
                 }
-                response_data["status"] = active_sub.status
                 response_data["start_date"] = active_sub.start_date.isoformat() if active_sub.start_date else None
                 
                 # Fetch end date from Stripe if available
@@ -284,7 +289,7 @@ class UserCurrentPlanView(APIView):
                         end_date_str = current_period_end.isoformat()
                         
                         if stripe_sub.cancel_at_period_end:
-                            response_data["status"] = "cancels_at_period_end"
+                            response_data["status"] = "cancel"
                     except Exception:
                         end_date_str = active_sub.end_date.isoformat() if active_sub.end_date else None
                 else:
@@ -310,8 +315,8 @@ class UserCurrentPlanView(APIView):
                 response_data["end_date"] = end_date_str
                 response_data["expire_date"] = end_date_str
                 
-                # Next billing date is the same as the end date if the subscription is not set to cancel
-                if response_data["status"] not in ["cancelled", "cancels_at_period_end"]:
+                # Next billing date is the same as the end date if the subscription is active and not cancelling
+                if response_data["status"] not in ["cancelled", "cancels_at_period_end", "cancel"]:
                     response_data["next_billing_date"] = end_date_str
                 else:
                     response_data["next_billing_date"] = None
