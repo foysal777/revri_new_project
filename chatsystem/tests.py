@@ -732,11 +732,13 @@ class APIIntegrationTests(APITestCase):
         UserQueryLog.objects.create(query_text="What assessments are available?", is_blocked=False)
         UserQueryLog.objects.create(query_text="What assessments are available?", is_blocked=False)
         UserQueryLog.objects.create(query_text="Where can I find research books?", is_blocked=False)
+        for i in range(5):
+            UserQueryLog.objects.create(query_text=f"Question {i}", is_blocked=False)
 
         url = reverse('ai-common-questions')
         resp = self.client.get(url)
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertTrue(len(resp.data['data']) >= 2)
+        self.assertLessEqual(len(resp.data['data']), 5)
         self.assertEqual(resp.data['data'][0]['question'], "What assessments are available?")
         self.assertEqual(resp.data['data'][0]['count'], 2)
 

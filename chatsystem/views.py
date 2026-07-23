@@ -270,13 +270,18 @@ class FrequentQuestionsView(generics.GenericAPIView):
         from django.db.models import Count, Max
 
         try:
-            limit = int(request.query_params.get('limit', 10))
+            limit = int(request.query_params.get('limit', 5))
+            if limit <= 0:
+                limit = 5
         except ValueError:
-            limit = 10
+            limit = 5
+        limit = min(limit, 5)
 
         # Query frequency from UserQueryLog
         qs = (
             models.UserQueryLog.objects.filter(is_blocked=False)
+            .exclude(query_text__isnull=True)
+            .exclude(query_text__exact='')
             .values('query_text')
             .annotate(count=Count('id'), last_asked=Max('created_at'))
             .order_by('-count', '-last_asked')[:limit]
@@ -323,6 +328,8 @@ class FrequentQuestionsView(generics.GenericAPIView):
                 {'question': q, 'count': 1, 'last_asked': None}
                 for q in default_faqs[:limit]
             ]
+
+        results = results[:limit]
 
         try:
             from common.responses import success_response
