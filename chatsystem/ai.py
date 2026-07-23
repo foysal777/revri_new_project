@@ -669,6 +669,10 @@ def _parse_price_filters(message: str) -> Dict[str, Any]:
 def _parse_top_k(message: str) -> Optional[int]:
     """Parse topK count requested in user message."""
     lower = message.lower()
+    # Check if asking for details/info/description of a specific single product
+    if re.search(r'\b(?:details?\s+of|info\s+on|about\s+the|price\s+of|named\s+as|product\s+named)\b', lower) or \
+       re.search(r'\b(?:give\s+me\s+details|tell\s+me\s+about|show\s+me\s+details|what\s+is)\s+(?:the\s+)?product\b', lower):
+        return 1
     if re.search(r'\b(?:only\s+one|single|one|1)\s+products?\b', lower) or re.search(r'\b(?:only\s+one|single|just\s+one)\b', lower):
         return 1
     match = re.search(r'\b(\d+)\s+products?\b', lower)
@@ -718,6 +722,7 @@ def _classify_query_intent(message: str, conversation_history: Optional[List[Dic
             "keywords": _extract_search_terms(message),
             "clarification_question": None,
             "enriched_query": message,
+            "is_specific_product": False,
         }
 
     system_prompt = """You are an intelligent query classifier for a Black church resource marketplace.
@@ -734,11 +739,13 @@ Analyze the user's message and return a JSON object with these exact keys:
   "price_min": <number or null>,
   "price_max": <number or null>,
   "keywords": ["list", "of", "key", "concepts"],
+  "is_specific_product": true | false,
   "clarification_question": "<question to ask user if unclear, else null>",
   "enriched_query": "<rewritten query optimized for semantic search>"
 }
 
 Rules:
+- Set is_specific_product=true if the user asks for details, info, description, or price of a single specific named product (e.g. 'give me details of Black Millennials & Faith').
 - Use intent=product_search if the user wants to find, buy, or learn about any product/service.
 - Use intent=clarification_needed ONLY if the query is extremely vague (e.g. just 'help' or 'something').
 - Use intent=general_question for greetings, meta questions about the platform, etc.
@@ -775,12 +782,14 @@ Rules:
                       "ministry", "training", "curriculum", "download", "survey", "coaching",
                       "product", "buy", "price", "cost", "recommend", "suggest", "need", "want"]
         is_product = any(tok in lower for tok in indicators)
+        is_specific = bool(re.search(r'\b(?:details?\s+of|info\s+on|about\s+the|price\s+of|named\s+as|product\s+named)\b', lower))
         return {
             "intent": "product_search" if is_product else "general_question",
             "product_type_hint": None,
             "price_min": None,
             "price_max": None,
             "keywords": _extract_search_terms(message),
+            "is_specific_product": is_specific,
             "clarification_question": None,
             "enriched_query": message,
         }
@@ -928,24 +937,27 @@ def handle_message(
 
     # ── Route: product search ──
     if candidates or intent == "product_search":
+        is_specific_req = intent_data.get("is_specific_product", False) or (k == 1)
+        search_k = 1 if is_specific_req else k
+
         try:
             result = recommend_products(
                 query=enriched_query,
                 client_message=client_message or enriched_query,
-                topK=k,
+                topK=search_k,
                 candidates=candidates,
                 filters=smart_filters if smart_filters else None,
             )
         except Exception as e:
             result = {"error": f"recommendation failed: {str(e)}"}
 
-        # If we got results, ask GPT to write a friendly summary
+        # Filter down to single product if specific product request
+        if result.get("results") and is_specific_req:
+            result["results"] = result["results"][:1]
+
+        # If we got results, ask GPT to write a response
         if result.get("results") and openai_client:
             try:
-                product_list = "\n".join([
-                    f"- {r['name']} | ${r.get('price', 'N/A')} | {(r.get('description') or '')[:120]}"
-                    for r in result["results"]
-                ])
                 history_ctx = ""
                 if conversation_history:
                     history_ctx = "\n".join([
@@ -959,21 +971,41 @@ def handle_message(
                     else ""
                 )
 
-                summary_prompt = (
-                    "You are a helpful assistant for a Black church resource marketplace.\n"
-                    f"{history_section}"
-                    f"The user asked: {message}\n\n"
-                    f"Based on their request, here are the top matching products:\n{product_list}\n\n"
-                    "Write a warm, concise 2-3 sentence response introducing these results. "
-                    "Mention what they have in common with the user's need. "
-                    "Do not list every product — the UI will show them. End with an offer to refine."
-                )
-                
+                if is_specific_req or len(result["results"]) == 1:
+                    target_prod = result["results"][0]
+                    summary_prompt = (
+                        "You are an expert AI assistant for the Black Church Resource Marketplace (BMC).\n"
+                        f"{history_section}"
+                        f"The user asked: {message}\n\n"
+                        f"Target Product Details:\n"
+                        f"- Name: {target_prod['name']}\n"
+                        f"- Price: ${target_prod.get('price', 'N/A')}\n"
+                        f"- Description: {target_prod.get('description', 'No description available.')}\n"
+                        f"- URL: {target_prod.get('url', 'N/A')}\n\n"
+                        "Provide a comprehensive, detailed, and engaging overview of this specific product. "
+                        "Highlight key insights, resources provided, target audience, and how it helps churches/leaders. "
+                        "Directly fulfill the user's request with thorough details. Do not use generic introductory filler text."
+                    )
+                else:
+                    product_list = "\n".join([
+                        f"- {r['name']} | ${r.get('price', 'N/A')} | {(r.get('description') or '')[:120]}"
+                        for r in result["results"]
+                    ])
+                    summary_prompt = (
+                        "You are a helpful assistant for a Black church resource marketplace.\n"
+                        f"{history_section}"
+                        f"The user asked: {message}\n\n"
+                        f"Based on their request, here are the top matching products:\n{product_list}\n\n"
+                        "Write a warm, concise 2-3 sentence response introducing these results. "
+                        "Mention what they have in common with the user's need. "
+                        "Do not list every product — the UI will show them. End with an offer to refine."
+                    )
+
                 summary_resp = openai_client.chat.completions.create(
                     model=CHAT_MODEL,
                     messages=[{"role": "user", "content": summary_prompt}],
                     temperature=0.5,
-                    max_tokens=200,
+                    max_tokens=300,
                 )
                 result["answer"] = summary_resp.choices[0].message.content
             except Exception:

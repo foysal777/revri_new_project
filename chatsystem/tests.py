@@ -345,6 +345,37 @@ class HandleMessageTests(APITestCase):
         self.assertIn('results', result)
 
     @patch('chatsystem.ai.openai_client')
+    def test_specific_product_detail_route(self, mock_oc):
+        """Requesting details of a specific product should return 1 product result and detailed answer."""
+        mock_oc.chat.completions.create.side_effect = [
+            MagicMock(choices=[MagicMock(message=MagicMock(content=json.dumps({
+                "intent": "product_search",
+                "product_type_hint": "resource",
+                "price_min": None, "price_max": None,
+                "keywords": ["Black Millennials & Faith"],
+                "is_specific_product": True,
+                "clarification_question": None,
+                "enriched_query": "Black Millennials & Faith: A Profile"
+            })))]),
+            MagicMock(choices=[MagicMock(message=MagicMock(content="Black Millennials & Faith: A Profile ($29.99) provides key insights into Gen Z and millennial faith trends."))]),
+        ]
+        mock_oc.embeddings.create.return_value = self._mock_embed()
+
+        mock_chunks = [
+            {"product_id": 1, "name": "Black Millennials & Faith: A Profile", "description": "Profile info", "product_type": "resource", "link": None, "image_url": None, "price": "29.99", "score": 0.95},
+            {"product_id": 2, "name": "I Still Believe in the Black Church", "description": "Book info", "product_type": "resource", "link": None, "image_url": None, "price": "15.99", "score": 0.50},
+        ]
+
+        with patch('chatsystem.ai.vector_store.search', return_value=mock_chunks):
+            result = handle_message("give me the details of a product named as 'Black Millennials & Faith: A Profile'")
+
+        self.assertEqual(result.get('intent'), 'product_search')
+        self.assertIn('results', result)
+        self.assertEqual(len(result['results']), 1)
+        self.assertEqual(result['results'][0]['name'], "Black Millennials & Faith: A Profile")
+        self.assertIn('Gen Z and millennial faith trends', result.get('answer', ''))
+
+    @patch('chatsystem.ai.openai_client')
     def test_general_question_route(self, mock_oc):
         """General question should route to RAG and return 'answer'."""
         mock_oc.chat.completions.create.side_effect = [
