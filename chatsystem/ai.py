@@ -224,6 +224,7 @@ def build_ai_prompt(
     pdf_chunks: Optional[List[Dict[str, Any]]] = None,
     tone: str = 'helpful',
     response_length: str = 'medium',
+    conversation_history: Optional[List[Dict[str, str]]] = None,
 ) -> str:
     restriction_text = ai_setting.ai_restriction.strip() if ai_setting and ai_setting.ai_restriction else ''
     system_messages = [
@@ -240,6 +241,13 @@ def build_ai_prompt(
         system_messages.append('Provide a detailed and helpful response.')
     else:
         system_messages.append('Provide a clear, moderate-length response.')
+
+    if conversation_history:
+        history_str = "\n".join([
+            f"{t['role'].capitalize()}: {t['content']}"
+            for t in conversation_history[-12:]
+        ])
+        system_messages.append(f'Recent Conversation History (Past 6 pairs of messages):\n{history_str}')
 
     if pdf_chunks:
         system_messages.append(
@@ -382,6 +390,7 @@ def query_with_rag(
     response_length: str = "medium",
     ai_setting: Optional[AISetting] = None,
     pdf_chunks: Optional[List[Dict[str, Any]]] = None,
+    conversation_history: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
     """Execute a RAG query: embed query, search, build prompt, call LLM."""
     global last_openai_error
@@ -394,7 +403,7 @@ def query_with_rag(
         return {"error": f"embedding failed: {message}"}
 
     chunks = vector_store.search(query_embedding, topK=topK, min_score=min_score)
-    prompt = build_ai_prompt(query, ai_setting=ai_setting, pdf_chunks=pdf_chunks, tone=tone, response_length=response_length)
+    prompt = build_ai_prompt(query, ai_setting=ai_setting, pdf_chunks=pdf_chunks, tone=tone, response_length=response_length, conversation_history=conversation_history)
 
     try:
         resp = openai_client.chat.completions.create(
@@ -754,7 +763,7 @@ Rules:
 
     messages = [{"role": "system", "content": system_prompt}]
     if conversation_history:
-        for turn in conversation_history[-4:]:
+        for turn in conversation_history[-12:]:
             messages.append(turn)
     messages.append({"role": "user", "content": message})
 
@@ -962,7 +971,7 @@ def handle_message(
                 if conversation_history:
                     history_ctx = "\n".join([
                         f"{t['role'].capitalize()}: {t['content']}"
-                        for t in conversation_history[-4:]
+                        for t in conversation_history[-12:]
                     ])
 
                 history_section = (
@@ -1029,6 +1038,7 @@ def handle_message(
                 response_length="medium",
                 ai_setting=ai_setting,
                 pdf_chunks=pdf_chunks if pdf_chunks else None,
+                conversation_history=conversation_history,
             )
         except Exception as e:
             result = {"error": f"query failed: {str(e)}"}
