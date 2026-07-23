@@ -191,7 +191,7 @@ def _split_text_into_chunks(text: str, max_chars: int = 1200) -> List[str]:
     return chunks
 
 
-def search_pdf_knowledge(query: str, pdf: KnowledgePDF, topK: int = 3) -> List[Dict[str, Any]]:
+def search_pdf_knowledge(query: str, pdf: KnowledgePDF, topK: int = 3, min_score: float = 0.35) -> List[Dict[str, Any]]:
     pdf_text = extract_pdf_text(pdf)
     if not pdf_text:
         return []
@@ -207,11 +207,12 @@ def search_pdf_knowledge(query: str, pdf: KnowledgePDF, topK: int = 3) -> List[D
         if not embedding:
             continue
         score = cosine_similarity(query_embedding, embedding)
-        scored.append({
-            'name': 'PDF context',
-            'content': chunk,
-            'score': score,
-        })
+        if score >= min_score:
+            scored.append({
+                'name': 'PDF context',
+                'content': chunk,
+                'score': score,
+            })
 
     scored.sort(key=lambda x: x['score'], reverse=True)
     return scored[:topK]
@@ -225,7 +226,10 @@ def build_ai_prompt(
     response_length: str = 'medium',
 ) -> str:
     restriction_text = ai_setting.ai_restriction.strip() if ai_setting and ai_setting.ai_restriction else ''
-    system_messages = ['You are a helpful AI assistant.']
+    system_messages = [
+        'You are a helpful AI assistant for the Black Church Resource Marketplace (BMC).',
+        'BMC offers books, research reports, church health assessments, digital downloads, webinars, and coaching programs tailored for Black churches and leaders.'
+    ]
 
     if restriction_text:
         system_messages.append(f'AI Restrictions: {restriction_text}')
@@ -239,15 +243,15 @@ def build_ai_prompt(
 
     if pdf_chunks:
         system_messages.append(
-            'Use the following knowledge base context to answer the user query. Only use this information when it is relevant and helpful.'
+            'Use the following knowledge base context to answer the user query. Only use this information when it is directly relevant and helpful.'
         )
         system_messages.append(
-            'CRITICAL: Do not mention "PDF", "provided PDF", "provided document", "provided context", "context", "source", "document", or similar terms in your response. Answer naturally as if this is your own knowledge. If the provided context does not contain the answer, answer the user query generally or politely state that you do not have that information, without referencing any document, context, or PDF.'
+            'CRITICAL: Do not mention "PDF", "provided PDF", "provided document", "provided context", "context", "source", "document", or similar terms in your response. Answer naturally as if this is your own knowledge. If the provided context does not contain the answer, answer the user query based on BMC marketplace resources without referencing any document, context, or PDF.'
         )
         for idx, chunk in enumerate(pdf_chunks, start=1):
             system_messages.append(f'Section {idx}: {chunk.get("content", "")}')
 
-    system_messages.append('Do not include any unrelated information beyond the user request.')
+    system_messages.append('Do not include any unrelated process, internal metric, or irrelevant operational information.')
     system_text = '\n\n'.join(system_messages)
 
     return f"{system_text}\n\nUser Query: {message}\n\nAnswer:"

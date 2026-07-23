@@ -19,6 +19,8 @@ from accounts.views import (
     report_user_view,
     block_user_view,
     account_overview_view,
+    ExportUsersCSVView,
+    UserDetailUpdateDeleteView,
 )
 from plan import views as plan_views
 
@@ -43,6 +45,8 @@ urlpatterns = [
 
     path('user-query-log-list/', chatsystem_views.UserQueryLogListView.as_view(), name='user-query-log-list'),
     path('user-query-log-delete/<int:pk>/', chatsystem_views.UserQueryLogDeleteView.as_view(), name='user-query-log-delete'),
+    path('ai-common-questions/', chatsystem_views.FrequentQuestionsView.as_view(), name='ai-common-questions'),
+    path('frequent-questions/', chatsystem_views.FrequentQuestionsView.as_view(), name='frequent-questions'),
 
 
     path('admin-dashboard-stats/', admin_dashboard_views.AdminDashboardStatsView.as_view(), name='admin-dashboard-stats'),
@@ -78,6 +82,8 @@ urlpatterns = [
     path('account-overview/', account_overview_view, name='account-overview'),
 
     path('admin-user-list/', AdminUserList.as_view(), name='admin-user-list'),
+    path('export-users-csv/', ExportUsersCSVView.as_view(), name='export-users-csv'),
+    path('admin-user-detail/<int:pk>/', UserDetailUpdateDeleteView.as_view(), name='admin-user-detail'),
 
     # Actions
     path('users/<int:id>/report/', report_user_view, name='report-user'),

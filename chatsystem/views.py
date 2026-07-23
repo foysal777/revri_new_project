@@ -112,7 +112,23 @@ class MessageCreate(generics.CreateAPIView):
                 name=f"Chat room for {request.user.email}",
             )
 
-        result = ai_module.handle_message(message_text)
+        # Build conversation history from recent room messages for multi-turn AI context
+        conversation_history = []
+        if room:
+            recent_msgs = models.Message.objects.filter(room=room, is_deleted=False).order_by('-created_at')[:6]
+            for m in reversed(list(recent_msgs)):
+                if m.message:
+                    conversation_history.append({"role": "user", "content": m.message})
+                if m.ai_response:
+                    try:
+                        ai_data = json.loads(m.ai_response)
+                        ans = ai_data.get('answer')
+                        if ans:
+                            conversation_history.append({"role": "assistant", "content": ans})
+                    except Exception:
+                        pass
+
+        result = ai_module.handle_message(message_text, conversation_history=conversation_history)
 
         # print("ai response",result)
         if isinstance(result, dict) and isinstance(result.get('results'), list):
@@ -146,15 +162,18 @@ class MessageCreate(generics.CreateAPIView):
             "message": serializers.MessageSerializer(message, context={"request": request}).data,
         }
 
-        channel_layer = get_channel_layer()
-        if channel_layer and room:
-            async_to_sync(channel_layer.group_send)(
-                f"chat_{room.id}",
-                {
-                    "type": "chat_message",
-                    "message": response_data["message"]
-                }
-            )
+        try:
+            channel_layer = get_channel_layer()
+            if channel_layer and room:
+                async_to_sync(channel_layer.group_send)(
+                    f"chat_{room.id}",
+                    {
+                        "type": "chat_message",
+                        "message": response_data["message"]
+                    }
+                )
+        except Exception:
+            pass  # Gracefully proceed if channel layer / Redis is unavailable
 
         return Response(response_data, status=status.HTTP_201_CREATED)
 
@@ -242,5 +261,74 @@ class UserQueryLogDeleteView(generics.DestroyAPIView):
     serializer_class = serializers.UserQueryLogSerializer
     permission_classes = [permissions.IsAuthenticated]
     lookup_field = 'id'
+
+
+class FrequentQuestionsView(generics.GenericAPIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, *args, **kwargs):
+        from django.db.models import Count, Max
+
+        try:
+            limit = int(request.query_params.get('limit', 10))
+        except ValueError:
+            limit = 10
+
+        # Query frequency from UserQueryLog
+        qs = (
+            models.UserQueryLog.objects.filter(is_blocked=False)
+            .values('query_text')
+            .annotate(count=Count('id'), last_asked=Max('created_at'))
+            .order_by('-count', '-last_asked')[:limit]
+        )
+
+        results = []
+        for item in qs:
+            query = (item['query_text'] or '').strip()
+            if query:
+                results.append({
+                    'question': query,
+                    'count': item['count'],
+                    'last_asked': item['last_asked'].strftime('%Y-%m-%d %H:%M:%S') if item['last_asked'] else None
+                })
+
+        # Fallback to Message model if no query logs
+        if not results:
+            msg_qs = (
+                models.Message.objects.filter(is_deleted=False)
+                .exclude(message='')
+                .values('message')
+                .annotate(count=Count('id'), last_asked=Max('created_at'))
+                .order_by('-count', '-last_asked')[:limit]
+            )
+            for item in msg_qs:
+                query = (item['message'] or '').strip()
+                if query:
+                    results.append({
+                        'question': query,
+                        'count': item['count'],
+                        'last_asked': item['last_asked'].strftime('%Y-%m-%d %H:%M:%S') if item['last_asked'] else None
+                    })
+
+        # Default curated FAQs for BMC if catalog database logs are empty
+        if not results:
+            default_faqs = [
+                "What church health assessments are available?",
+                "Where can I find research reports on Black Millennials & Faith?",
+                "How do I subscribe to leadership coaching programs?",
+                "What digital downloads and curriculum resources are provided?",
+                "How can I purchase books and research materials?"
+            ]
+            results = [
+                {'question': q, 'count': 1, 'last_asked': None}
+                for q in default_faqs[:limit]
+            ]
+
+        try:
+            from common.responses import success_response
+            return success_response(data=results, message="Frequently asked AI questions retrieved successfully.")
+        except Exception:
+            return Response({"data": results, "message": "Frequently asked AI questions retrieved successfully."}, status=status.HTTP_200_OK)
+
 
 

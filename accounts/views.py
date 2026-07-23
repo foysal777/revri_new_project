@@ -3,10 +3,13 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework import filters, status
 from drf_spectacular.utils import extend_schema, OpenApiResponse
+import csv
+from django.http import HttpResponse
 from .serializers import (
     RegisterSerializer, VerifyOTPSerializer, LoginSerializer,
     ResendOTPSerializer, ForgotPasswordSerializer, ResetPasswordSerializer,
-    UserProfileSerializer, UserListSerializer, ReportUserSerializer
+    UserProfileSerializer, UserListSerializer, ReportUserSerializer,
+    UserAdminUpdateSerializer
 )
 from django.contrib.auth import get_user_model, authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -444,3 +447,44 @@ def account_overview_view(request):
     }
     
     return success_response(data=data, message="Account overview retrieved successfully.")
+
+
+class ExportUsersCSVView(generics.GenericAPIView):
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        responses={200: OpenApiResponse(description="CSV file download of all users.")},
+        tags=['Accounts - Admin / User Management'],
+    )
+    def get(self, request, *args, **kwargs):
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="users_export.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow([
+            'ID', 'Email', 'Full Name', 'Role', 'Plan Type',
+            'Is Verified', 'Is Active', 'Date Joined', 'Last Login'
+        ])
+
+        users = User.objects.all().order_by('-date_joined')
+        for user in users:
+            writer.writerow([
+                user.id,
+                user.email,
+                user.full_name or '',
+                getattr(user, 'userole', ''),
+                getattr(user, 'plantype', ''),
+                user.is_verified,
+                user.is_active,
+                user.date_joined.strftime('%Y-%m-%d %H:%M:%S') if user.date_joined else '',
+                user.last_login.strftime('%Y-%m-%d %H:%M:%S') if user.last_login else '',
+            ])
+
+        return response
+
+
+class UserDetailUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = User.objects.all()
+    serializer_class = UserAdminUpdateSerializer
+    permission_classes = [permissions.AllowAny]
+    lookup_field = 'pk'

@@ -105,3 +105,16 @@ class UserListSerializer(serializers.ModelSerializer):
 
 class ReportUserSerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=255)
+
+
+class UserAdminUpdateSerializer(serializers.ModelSerializer):
+    profile_image = serializers.FileField(required=False, allow_null=True)
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'email', 'full_name', 'userole', 'plantype',
+            'is_verified', 'is_active', 'time_zone', 'profile_image',
+            'date_joined', 'last_login'
+        ]
+        read_only_fields = ['id', 'date_joined', 'last_login']

@@ -470,8 +470,10 @@ class APIIntegrationTests(APITestCase):
         url = reverse('send-message')
         resp = self.client.post(url, {'message': 'I need a church assessment'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
-        self.assertIn('ai_response', resp.data)
-        ai = resp.data['ai_response']
+        self.assertIn('message', resp.data)
+        ai = resp.data['message']['ai_response']
+        if isinstance(ai, str):
+            ai = json.loads(ai)
         self.assertEqual(ai.get('intent'), 'product_search')
 
     @patch('chatsystem.ai.openai_client')
@@ -480,7 +482,9 @@ class APIIntegrationTests(APITestCase):
         url = reverse('send-message')
         resp = self.client.post(url, {'message': 'help'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
-        ai = resp.data['ai_response']
+        ai = resp.data['message']['ai_response']
+        if isinstance(ai, str):
+            ai = json.loads(ai)
         self.assertEqual(ai.get('intent'), 'clarification_needed')
         self.assertIn('answer', ai)
 
@@ -515,7 +519,9 @@ class APIIntegrationTests(APITestCase):
         url = reverse('send-message')
         resp = self.client.post(url, {'message': 'badword content'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
-        ai = resp.data['ai_response']
+        ai = resp.data['message']['ai_response']
+        if isinstance(ai, str):
+            ai = json.loads(ai)
         self.assertTrue(ai.get('blocked'))
 
     def test_send_message_unauthenticated(self):
@@ -682,10 +688,24 @@ class APIIntegrationTests(APITestCase):
         resp = self.client.get(url)
         self.assertEqual(resp.data['data']['queries_limit'], '3/5')
 
-        # 2. With plantype = None (None / —)
-        self.user.plantype = None
+        # 2. With plantype = '' (None / —)
+        self.user.plantype = ''
         self.user.save()
         resp = self.client.get(url)
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['data']['plan'], 'None')
         self.assertEqual(resp.data['data']['queries_limit'], '—')
+
+    def test_frequent_questions_endpoint(self):
+        from chatsystem.models import UserQueryLog
+        UserQueryLog.objects.create(query_text="What assessments are available?", is_blocked=False)
+        UserQueryLog.objects.create(query_text="What assessments are available?", is_blocked=False)
+        UserQueryLog.objects.create(query_text="Where can I find research books?", is_blocked=False)
+
+        url = reverse('ai-common-questions')
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertTrue(len(resp.data['data']) >= 2)
+        self.assertEqual(resp.data['data'][0]['question'], "What assessments are available?")
+        self.assertEqual(resp.data['data'][0]['count'], 2)
+
