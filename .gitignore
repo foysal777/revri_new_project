@@ -22,3 +22,7 @@ media/*
 *.swo
 *~
 
+# Vector store files (large embedding data - regenerate with ingest_transcripts.py)
+data/transcript-vector-store.json
+data/ai-vector-store.json
+data/ai-blocked-counts.json
