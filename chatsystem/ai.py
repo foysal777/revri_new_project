@@ -34,6 +34,7 @@ EMBEDDING_MODEL = getattr(settings, 'AI_EMBEDDING_MODEL', getattr(settings, 'OPE
 CHAT_MODEL = getattr(settings, 'AI_CHAT_MODEL', getattr(settings, 'OPENAI_MODEL', 'gpt-4o-mini'))
 VECTOR_STORE_PATH = getattr(settings, 'AI_VECTOR_STORE_PATH', getattr(settings, 'VECTOR_STORE_PATH', os.path.join(settings.BASE_DIR, 'data', 'ai-vector-store.json')))
 BLOCKED_COUNTS_FILE = getattr(settings, 'AI_BLOCKED_COUNTS_FILE', os.path.join(settings.BASE_DIR, 'data', 'ai-blocked-counts.json'))
+TRANSCRIPT_VECTOR_STORE_PATH = getattr(settings, 'AI_TRANSCRIPT_VECTOR_STORE_PATH', os.path.join(settings.BASE_DIR, 'data', 'transcript-vector-store.json'))
 
 openai_client = None
 last_openai_error: Optional[str] = None
@@ -132,6 +133,7 @@ class VectorStore:
 
 
 vector_store = VectorStore()
+transcript_vector_store = VectorStore(path=TRANSCRIPT_VECTOR_STORE_PATH)
 
 
 def load_active_ai_setting() -> Optional[AISetting]:
@@ -222,45 +224,68 @@ def build_ai_prompt(
     message: str,
     ai_setting: Optional[AISetting] = None,
     pdf_chunks: Optional[List[Dict[str, Any]]] = None,
+    transcript_chunks: Optional[List[Dict[str, Any]]] = None,
     tone: str = 'helpful',
     response_length: str = 'medium',
     conversation_history: Optional[List[Dict[str, str]]] = None,
 ) -> str:
     restriction_text = ai_setting.ai_restriction.strip() if ai_setting and ai_setting.ai_restriction else ''
+
     system_messages = [
-        'You are a helpful AI assistant for the Black Church Resource Marketplace (BMC).',
-        'BMC offers books, research reports, church health assessments, digital downloads, webinars, and coaching programs tailored for Black churches and leaders.'
+        'You are Rev. Dr. Brianna K. Parker\'s BMC AI Assistant — a knowledgeable advisor for Black church leaders.',
+        'BMC (Black Millennials & Faith / Black Church Resource Marketplace) equips Black church leaders with '
+        'research, training, webinars, coaching, and resources grounded in years of BMC expertise.',
+        '',
+        'RESPONSE PHILOSOPHY:',
+        '1. LEAD WITH SUBSTANCE: First, provide a thorough, educational answer using the knowledge and insights from BMC training content, webinars, and research.',
+        '2. BE PRACTICAL: Give actionable, specific strategies, frameworks, or principles the leader can apply immediately.',
+        '3. CITE INSIGHTS NATURALLY: Draw from BMC webinar knowledge and expertise. Never say "transcript", "webinar chunk", "document", "PDF", "context", or "source" — speak as a knowledgeable advisor.',
+        '4. PRODUCT RECOMMENDATION IS OPTIONAL & LAST: Only after giving a full educational response, you MAY mention one relevant BMC product or resource as a next step — but only if it genuinely adds value. Phrase it naturally: e.g., "If you want to dive deeper, BMC has a resource called [X] that..."',
+        '5. NEVER lead with a product. Never make the answer primarily about purchasing something.',
     ]
 
     if restriction_text:
-        system_messages.append(f'AI Restrictions: {restriction_text}')
+        system_messages.append(f'\nAI Restrictions: {restriction_text}')
 
     if response_length == 'short':
-        system_messages.append('Keep the response concise and to the point.')
+        system_messages.append('\nKeep the response concise and focused — 2-3 paragraphs max.')
     elif response_length == 'long':
-        system_messages.append('Provide a detailed and helpful response.')
+        system_messages.append('\nProvide a thorough, detailed response with clear sections or bullet points where helpful.')
     else:
-        system_messages.append('Provide a clear, moderate-length response.')
+        system_messages.append('\nProvide a clear, substantive response — typically 2-4 paragraphs.')
 
     if conversation_history:
         history_str = "\n".join([
             f"{t['role'].capitalize()}: {t['content']}"
             for t in conversation_history[-12:]
         ])
-        system_messages.append(f'Recent Conversation History (Past 6 pairs of messages):\n{history_str}')
+        system_messages.append(f'\nRecent Conversation History (Past 6 pairs):\n{history_str}')
 
+    # Webinar transcript knowledge (educational content — highest priority)
+    if transcript_chunks:
+        system_messages.append(
+            '\nBMC TRAINING INSIGHTS (use these to provide a substantive, grounded answer):\n'
+            'The following are excerpts from BMC webinars and training sessions led by Rev. Dr. Brianna K. Parker '
+            'and BMC experts. Use this knowledge to give an expert, practical answer. '
+            'Do NOT say "transcript", "webinar chunk", "document", "context", "source", or any similar term. '
+            'Speak as an expert advisor who has this knowledge.'
+        )
+        for idx, chunk in enumerate(transcript_chunks, start=1):
+            content = chunk.get('content', '').strip()
+            source_label = chunk.get('source', '')
+            if content:
+                system_messages.append(f'Insight {idx} [{source_label}]: {content}')
+
+    # PDF knowledge base (supplemental)
     if pdf_chunks:
         system_messages.append(
-            'Use the following knowledge base context to answer the user query. Only use this information when it is directly relevant and helpful.'
-        )
-        system_messages.append(
-            'CRITICAL: Do not mention "PDF", "provided PDF", "provided document", "provided context", "context", "source", "document", or similar terms in your response. Answer naturally as if this is your own knowledge. If the provided context does not contain the answer, answer the user query based on BMC marketplace resources without referencing any document, context, or PDF.'
+            '\nADDITIONAL KNOWLEDGE BASE CONTEXT (use when directly relevant):'
         )
         for idx, chunk in enumerate(pdf_chunks, start=1):
-            system_messages.append(f'Section {idx}: {chunk.get("content", "")}')
+            system_messages.append(f'Reference {idx}: {chunk.get("content", "")}')
 
-    system_messages.append('Do not include any unrelated process, internal metric, or irrelevant operational information.')
-    system_text = '\n\n'.join(system_messages)
+    system_messages.append('\nDo not include internal metrics, operational notes, or irrelevant process information.')
+    system_text = '\n'.join(system_messages)
 
     return f"{system_text}\n\nUser Query: {message}\n\nAnswer:"
 
@@ -337,6 +362,31 @@ def cosine_similarity(a: List[float], b: List[float]) -> float:
     if mag_a == 0 or mag_b == 0:
         return 0.0
     return dot / (mag_a * mag_b)
+
+
+def search_transcripts(query: str, topK: int = 5, min_score: float = 0.30) -> List[Dict[str, Any]]:
+    """Search the webinar transcript vector store for relevant educational content."""
+    if not openai_client:
+        return []
+    try:
+        query_embedding = embed_text(query)
+        if not query_embedding:
+            return []
+        store_data = transcript_vector_store.read()
+        chunks = store_data.get('chunks', [])
+        if not chunks:
+            return []
+        scored = []
+        for chunk in chunks:
+            emb = chunk.get('embedding')
+            if emb:
+                score = cosine_similarity(query_embedding, emb)
+                if score >= min_score:
+                    scored.append({'score': score, **chunk})
+        scored.sort(key=lambda x: x['score'], reverse=True)
+        return scored[:topK]
+    except Exception:
+        return []
 
 
 def _extract_search_terms(query: str) -> List[str]:
@@ -1028,23 +1078,47 @@ def handle_message(
         active_pdf = get_active_pdf()
         pdf_chunks = []
         if active_pdf:
-            pdf_chunks = search_pdf_knowledge(message, active_pdf, topK=k)
+            pdf_chunks = search_pdf_knowledge(message, active_pdf, topK=3)
+
+        # Search webinar transcript knowledge base (educational-first)
+        t_chunks = search_transcripts(message, topK=6, min_score=0.28)
 
         try:
-            result = query_with_rag(
+            prompt = build_ai_prompt(
                 message,
-                topK=k,
-                tone="helpful",
-                response_length="medium",
                 ai_setting=ai_setting,
                 pdf_chunks=pdf_chunks if pdf_chunks else None,
+                transcript_chunks=t_chunks if t_chunks else None,
+                tone="helpful",
+                response_length="medium",
                 conversation_history=conversation_history,
             )
+
+            if not openai_client:
+                result = {"error": "OpenAI not configured"}
+            else:
+                try:
+                    resp = openai_client.chat.completions.create(
+                        model=CHAT_MODEL,
+                        messages=[{"role": "system", "content": prompt}],
+                        temperature=0.7,
+                        max_tokens=700,
+                    )
+                    answer = resp.choices[0].message.content
+                    result = {
+                        "query": message,
+                        "answer": answer,
+                        "chunks_used": len(t_chunks) + len(pdf_chunks),
+                    }
+                except Exception as e:
+                    result = {"error": str(e)}
         except Exception as e:
             result = {"error": f"query failed: {str(e)}"}
 
         result["intent"] = "general_question"
-        if active_pdf and pdf_chunks:
+        if t_chunks:
+            result["source"] = "transcript_knowledge"
+        elif active_pdf and pdf_chunks:
             result["source"] = "pdf_knowledge"
         elif result.get("source") is None:
             result["source"] = "direct_ai"
