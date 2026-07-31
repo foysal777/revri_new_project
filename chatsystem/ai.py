@@ -762,34 +762,46 @@ def _classify_query_intent(message: str, conversation_history: Optional[List[Dic
       - price_min: float | None
       - price_max: float | None
       - keywords: list of semantic search keywords
+      - is_specific_product: bool
       - clarification_question: str (only when intent='clarification_needed')
       - enriched_query: str (rewritten query optimized for vector search)
     """
-    if not openai_client:
-        # Fallback: simple keyword-based detection
-        lower = message.lower()
-        indicators = ["assessment", "resource", "book", "webinar", "program", "subscribe",
-                      "product", "buy", "price", "cost", "recommend", "suggest", "shop",
-                      "need", "want", "looking", "find", "help", "church", "ministry",
-                      "training", "curriculum", "download", "survey", "coaching"]
-        is_product = any(tok in lower for tok in indicators)
-        return {
-            "intent": "product_search" if is_product else "general_question",
-            "product_type_hint": None,
-            "price_min": None,
-            "price_max": None,
-            "keywords": _extract_search_terms(message),
-            "clarification_question": None,
-            "enriched_query": message,
-            "is_specific_product": False,
-        }
+    lower = message.lower().strip()
+
+    # Pre-check 1: Check for explicit single-product detail requests
+    is_specific_named_product = bool(
+        re.search(r'\b(?:details?\s+of|info\s+on|about\s+the|price\s+of|named\s+as|product\s+named)\b', lower) or
+        re.search(r'\b(?:give\s+me\s+details|tell\s+me\s+about|show\s+me\s+details|what\s+is)\s+(?:the\s+)?product\b', lower)
+    )
+
+    # Pre-check 2: Check for explicit general question / pastoral guidance / how-to / content generation patterns
+    general_patterns = [
+        r'\bhow\s+can\s+(?:we|i|a\s+church|pastors?)\b',
+        r'\bhow\s+to\b',
+        r'\bhow\s+(?:do|should)\s+(?:we|i)\b',
+        r'\bwhy\s+(?:are|do|is)\b',
+        r'\bwhat\s+can\s+(?:we|i)\s+do\b',
+        r'\bwhat\s+are\s+the\s+top\s+(?:pain\s+points|challenges|reasons)\b',
+        r'\bsermon\s+(?:ideas|for|points|outline|outlines)\b',
+        r'\bpresentation\s+(?:outline|outlines|ideas|points|slides?)\b',
+        r'\b(?:give\s+me|can\s+you\s+give\s+me|provide\s+(?:me\s+with|us\s+with)?|write|draft|create)\s+.*(?:outline|outlines|presentation|sermon|ideas|points|framework|plan|guidelines?|strategies)\b',
+        r'\bhow\s+do\s+we\s+build\b',
+        r'\bhow\s+to\s+inspire\b',
+        r'\bhow\s+can\s+i\s+build\b',
+        r'\bi\s+am\s+(?:having\s+trouble|a\s+ministry\s+leader|writing\s+a\s+sermon|leading)\b',
+        r'\bhelp\s+young\s+(?:adults|professionals|people|believers)\b',
+        r'\bbuilding\s+(?:stronger\s+relationships|a\s+strong\s+foundation)\b',
+        r'\b(?:outline|outlines|presentation|workshop|lesson\s+plan|framework|strategy)\b',
+    ]
+    is_general_pattern = any(re.search(pat, lower) for pat in general_patterns)
+    has_buy_action = any(tok in lower for tok in ["buy", "purchase", "price of", "how much is", "show products", "show books", "catalog", "shop", "order"])
 
     system_prompt = """You are an intelligent query classifier for a Black church resource marketplace.
 The catalog includes:
-- Assessments (church health surveys: assimilation, worship, leadership, youth, etc.) — type: resource, price ~$119
-- Books & Research Reports (Black church studies, millennials & faith) — type: resource, price varies
-- Digital Downloads (curriculum, templates, presentations) — type: resource
-- Services & Programs (webinars, monthly subscriptions, coaching frameworks) — type: consultancy
+- Assessments (church health surveys: assimilation, worship, leadership, youth, etc.)
+- Books & Research Reports (Black church studies, millennials & faith)
+- Digital Downloads (curriculum, templates, presentations)
+- Services & Programs (webinars, monthly subscriptions, coaching frameworks)
 
 Analyze the user's message and return a JSON object with these exact keys:
 {
@@ -803,13 +815,29 @@ Analyze the user's message and return a JSON object with these exact keys:
   "enriched_query": "<rewritten query optimized for semantic search>"
 }
 
-Rules:
-- Set is_specific_product=true if the user asks for details, info, description, or price of a single specific named product (e.g. 'give me details of Black Millennials & Faith').
-- Use intent=product_search if the user wants to find, buy, or learn about any product/service.
-- Use intent=clarification_needed ONLY if the query is extremely vague (e.g. just 'help' or 'something').
-- Use intent=general_question for greetings, meta questions about the platform, etc.
-- enriched_query should expand abbreviations and add relevant context for better vector matching.
-- Return ONLY valid JSON. No explanation text."""
+CRITICAL INTENT RULES:
+1. "general_question" MUST be used for ANY question asking for advice, how-to guidance, strategies, ideas, sermon help, youth ministry tips, intergenerational connection, why people leave church, leadership advice, or ministry development (e.g., 'How can we inspire...', 'How can we build...', 'Why are people...', 'What are pain points...', 'How do I lead...').
+2. "product_search" MUST ONLY be used if the user explicitly asks to BUY, SEARCH FOR, LIST, or RECOMMEND products/books/assessments/downloads/courses (e.g. 'what books do you sell on X?', 'show me assessments', 'recommend a product', 'how much is X', 'give me details of product X').
+3. Set is_specific_product=true if the user asks for details, info, description, or price of a single specific named product (e.g. 'give me details of Black Millennials & Faith' or 'tell me about product X').
+4. Use intent="clarification_needed" ONLY if the query is extremely vague (e.g. just 'help' or 'hi').
+5. Return ONLY valid JSON. No explanation text."""
+
+    if not openai_client:
+        # Fallback: strict keyword detection without triggering on common vocabulary
+        explicit_product_tokens = ["buy", "purchase", "price", "cost", "how much", "assessment", "book", "report", "catalog", "shop", "product named", "named as"]
+        is_product = any(tok in lower for tok in explicit_product_tokens) or is_specific_named_product
+        if is_general_pattern and not has_buy_action:
+            is_product = False
+        return {
+            "intent": "product_search" if is_product else "general_question",
+            "product_type_hint": None,
+            "price_min": None,
+            "price_max": None,
+            "keywords": _extract_search_terms(message),
+            "is_specific_product": is_specific_named_product,
+            "clarification_question": None,
+            "enriched_query": message,
+        }
 
     messages = [{"role": "system", "content": system_prompt}]
     if conversation_history:
@@ -821,13 +849,23 @@ Rules:
         resp = openai_client.chat.completions.create(
             model=CHAT_MODEL,
             messages=messages,
-            temperature=0.1,
+            temperature=0.0,
             max_tokens=300,
             response_format={"type": "json_object"},
         )
         raw = resp.choices[0].message.content
         parsed = json.loads(raw)
-        # Merge price filters from regex as fallback
+
+        # Safety override 1: If query has clear how-to/guidance pattern and no buy action, force general_question
+        if is_general_pattern and not has_buy_action and not is_specific_named_product:
+            parsed["intent"] = "general_question"
+            parsed["is_specific_product"] = False
+
+        # Safety override 2: If query asks for details of a named product, force product_search and is_specific_product=True
+        if is_specific_named_product:
+            parsed["intent"] = "product_search"
+            parsed["is_specific_product"] = True
+
         regex_prices = _parse_price_filters(message)
         if regex_prices.get("min_price") and not parsed.get("price_min"):
             parsed["price_min"] = regex_prices["min_price"]
@@ -835,20 +873,17 @@ Rules:
             parsed["price_max"] = regex_prices["max_price"]
         return parsed
     except Exception:
-        # Fallback to simple detection
-        lower = message.lower()
-        indicators = ["assessment", "resource", "book", "webinar", "program", "church",
-                      "ministry", "training", "curriculum", "download", "survey", "coaching",
-                      "product", "buy", "price", "cost", "recommend", "suggest", "need", "want"]
-        is_product = any(tok in lower for tok in indicators)
-        is_specific = bool(re.search(r'\b(?:details?\s+of|info\s+on|about\s+the|price\s+of|named\s+as|product\s+named)\b', lower))
+        explicit_product_tokens = ["buy", "purchase", "price", "cost", "how much", "assessment", "book", "report", "catalog", "shop", "product named", "named as"]
+        is_product = any(tok in lower for tok in explicit_product_tokens) or is_specific_named_product
+        if is_general_pattern and not has_buy_action:
+            is_product = False
         return {
             "intent": "product_search" if is_product else "general_question",
             "product_type_hint": None,
             "price_min": None,
             "price_max": None,
             "keywords": _extract_search_terms(message),
-            "is_specific_product": is_specific,
+            "is_specific_product": is_specific_named_product,
             "clarification_question": None,
             "enriched_query": message,
         }
