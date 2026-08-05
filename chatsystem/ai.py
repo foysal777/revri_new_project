@@ -550,8 +550,8 @@ def recommend_products(query: str, client_message: Optional[str] = None, topK: i
     if not query_embedding:
         return {"error": "embedding failed"}
 
-    # Fetch more candidates to allow filtering (e.g. 2x topK)
-    chunks = vector_store.search(query_embedding, topK=topK * 4 if topK > 0 else 20)
+    # Fetch more candidates to allow filtering (e.g. 4x topK with lower threshold min_score=0.15 for broad queries)
+    chunks = vector_store.search(query_embedding, topK=topK * 4 if topK > 0 else 20, min_score=0.15)
     if chunks:
         # Apply filters to chunks
         filtered_chunks = []
@@ -591,7 +591,7 @@ def recommend_products(query: str, client_message: Optional[str] = None, topK: i
         if not chunks and filters and (filters.get("max_price") or filters.get("min_price")):
             price_only_filters = {k: v for k, v in filters.items() if k not in ("max_price", "min_price", "inclusive")}
             fallback_chunks = []
-            for c in vector_store.search(query_embedding, topK=topK * 4 if topK > 0 else 20):
+            for c in vector_store.search(query_embedding, topK=topK * 4 if topK > 0 else 20, min_score=0.15):
                 if price_only_filters.get("product_type") and c.get("product_type") != price_only_filters.get("product_type"):
                     continue
                 fallback_chunks.append(c)
@@ -636,14 +636,12 @@ def recommend_products(query: str, client_message: Optional[str] = None, topK: i
         q_filter = Q()
         for term in terms:
             q_filter |= Q(name__icontains=term) | Q(description__icontains=term) | Q(product_type__icontains=term)
-        qs = qs.filter(q_filter)
+        filtered_qs = qs.filter(q_filter)
+        if filtered_qs.exists():
+            qs = filtered_qs
 
-    if not qs.exists() and filters:
+    if not qs.exists():
         qs = Product.objects.filter(is_published=True)
-        if filters.get("min_price") is not None:
-            qs = qs.filter(product_price__gte=filters["min_price"])
-        if filters.get("max_price") is not None:
-            qs = qs.filter(product_price__lte=filters["max_price"])
 
     return {
         "query": query,
@@ -813,7 +811,10 @@ def _classify_query_intent(message: str, conversation_history: Optional[List[Dic
         r'\bwhat\s+is\s+(?:bmc|black\s+millennial\s+caf)\b',
     ]
     is_general_pattern = any(re.search(pat, lower) for pat in general_patterns)
-    has_buy_action = any(tok in lower for tok in ["buy", "purchase", "price of", "how much is", "show products", "show books", "catalog", "shop", "order"])
+    has_buy_action = any(tok in lower for tok in [
+        "buy", "purchase", "price of", "how much is", "show products", "show books", "show resources", 
+        "catalog", "shop", "order", "products under", "books under", "resources under", "show me products"
+    ])
 
     system_prompt = """You are an intelligent query classifier for a Black church resource marketplace.
 The catalog includes:
@@ -884,6 +885,10 @@ CRITICAL INTENT RULES:
         if is_specific_named_product:
             parsed["intent"] = "product_search"
             parsed["is_specific_product"] = True
+
+        # Safety override 3: If query explicitly asks for product search/buy/list action, force product_search
+        if has_buy_action:
+            parsed["intent"] = "product_search"
 
         regex_prices = _parse_price_filters(message)
         if regex_prices.get("min_price") and not parsed.get("price_min"):
