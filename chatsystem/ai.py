@@ -584,9 +584,24 @@ def recommend_products(query: str, client_message: Optional[str] = None, topK: i
             filtered_chunks.append(c)
 
         chunks = filtered_chunks[:topK if topK > 0 else 5]
+        price_mismatch = False
+        # Price-filter fallback: if filtering by price produced 0 results, retry
+        # without the price filter so we can still show relevant products with a
+        # friendly message like "nothing in that price range, but here are our options"
+        if not chunks and filters and (filters.get("max_price") or filters.get("min_price")):
+            price_only_filters = {k: v for k, v in filters.items() if k not in ("max_price", "min_price", "inclusive")}
+            fallback_chunks = []
+            for c in vector_store.search(query_embedding, topK=topK * 4 if topK > 0 else 20):
+                if price_only_filters.get("product_type") and c.get("product_type") != price_only_filters.get("product_type"):
+                    continue
+                fallback_chunks.append(c)
+            chunks = fallback_chunks[:topK if topK > 0 else 5]
+            price_mismatch = True  # signal to GPT that price didn't match
         if chunks:
             return {
                 "query": query,
+                "price_mismatch": price_mismatch,
+                "price_requested": filters.get("max_price") or filters.get("min_price") if price_mismatch else None,
                 "results": [
                     {
                         "id": c.get("product_id"),
@@ -1016,6 +1031,14 @@ def handle_message(
     }
     normalized_type_hint = TYPE_HINT_MAP.get(product_type_hint.lower().strip(), None) if product_type_hint else None
 
+    # Keyword override: if user explicitly says 'assessment(s)', force the type filter.
+    # The LLM sometimes maps assessment queries to 'resource' type — this corrects that.
+    _lower_msg = message.lower()
+    if re.search(r'\bassessments?\b', _lower_msg):
+        normalized_type_hint = "assessment"
+    elif re.search(r'\b(?:webinar|course|program|coaching|training|subscription|service)s?\b', _lower_msg) and not re.search(r'\b(?:book|report|download|resource)s?\b', _lower_msg):
+        normalized_type_hint = "services"
+
     # Build filters from intent + explicit overrides
     smart_filters: Dict[str, Any] = dict(filters or {})
     if intent_data.get("price_min") is not None:
@@ -1063,6 +1086,28 @@ def handle_message(
         except Exception as e:
             result = {"error": f"recommendation failed: {str(e)}"}
 
+        # Price-filter fallback: if 0 results AND price filters were active,
+        # retry without price filters so we can show alternatives with a
+        # friendly "nothing in that range" message.
+        if not result.get("results") and not result.get("error") and smart_filters and \
+           (smart_filters.get("max_price") or smart_filters.get("min_price")):
+            price_requested = smart_filters.get("max_price") or smart_filters.get("min_price")
+            fallback_filters = {k: v for k, v in smart_filters.items()
+                                if k not in ("max_price", "min_price", "inclusive")}
+            try:
+                result = recommend_products(
+                    query=message,  # use original message for better semantic match
+                    client_message=client_message or message,
+                    topK=search_k,
+                    candidates=candidates,
+                    filters=fallback_filters if fallback_filters else None,
+                )
+                if result.get("results"):
+                    result["price_mismatch"] = True
+                    result["price_requested"] = price_requested
+            except Exception:
+                pass  # keep original empty result
+
         # Filter down to single product if specific product request
         if result.get("results") and is_specific_req:
             result["results"] = result["results"][:1]
@@ -1103,10 +1148,22 @@ def handle_message(
                         f"- {r['name']} | ${r.get('price', 'N/A')} | {(r.get('description') or '')[:120]}"
                         for r in result["results"]
                     ])
+                    price_mismatch_note = ""
+                    if result.get("price_mismatch"):
+                        price_requested = result.get("price_requested", "")
+                        price_mismatch_note = (
+                            f"\nIMPORTANT: The user asked for products under ${price_requested}, "
+                            f"but we don't currently have any products in that price range. "
+                            f"The products shown below are our closest available options. "
+                            f"Start your response by warmly acknowledging this — e.g. "
+                            f"'We don't currently have products under ${price_requested}, "
+                            f"but here are our most relevant resources that may help you...'\n"
+                        )
                     summary_prompt = (
                         "You are a helpful assistant for a Black church resource marketplace.\n"
                         f"{history_section}"
                         f"The user asked: {message}\n\n"
+                        f"{price_mismatch_note}"
                         f"Based on their request, here are the top matching products:\n{product_list}\n\n"
                         "Write a warm, concise 2-3 sentence response introducing these results. "
                         "Mention what they have in common with the user's need. "
