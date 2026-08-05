@@ -811,10 +811,13 @@ def _classify_query_intent(message: str, conversation_history: Optional[List[Dic
         r'\bwhat\s+is\s+(?:bmc|black\s+millennial\s+caf)\b',
     ]
     is_general_pattern = any(re.search(pat, lower) for pat in general_patterns)
-    has_buy_action = any(tok in lower for tok in [
-        "buy", "purchase", "price of", "how much is", "show products", "show books", "show resources", 
-        "catalog", "shop", "order", "products under", "books under", "resources under", "show me products"
-    ])
+    buy_action_patterns = [
+        r'\bbuy\b', r'\bpurchase\b', r'\bprice\s+of\b', r'\bhow\s+much\s+is\b',
+        r'\bshow\s+products\b', r'\bshow\s+books\b', r'\bshow\s+resources\b',
+        r'\bcatalog\b', r'\bshop\b', r'\border\b', r'\bproducts\s+under\b',
+        r'\bbooks\s+under\b', r'\bresources\s+under\b', r'\bshow\s+me\s+products\b'
+    ]
+    has_buy_action = any(re.search(pat, lower) for pat in buy_action_patterns)
 
     system_prompt = """You are an intelligent query classifier for a Black church resource marketplace.
 The catalog includes:
