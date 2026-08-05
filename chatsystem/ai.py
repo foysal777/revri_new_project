@@ -794,6 +794,8 @@ def _classify_query_intent(message: str, conversation_history: Optional[List[Dic
         r'\bhelp\s+young\s+(?:adults|professionals|people|believers)\b',
         r'\bbuilding\s+(?:stronger\s+relationships|a\s+strong\s+foundation)\b',
         r'\b(?:outline|outlines|presentation|workshop|lesson\s+plan|framework|strategy)\b',
+        r'\btell\s+me\s+(?:more\s+)?about\s+(?:black\s+millennial|bmc|the\s+church|your\s+mission|your\s+vision)\b',
+        r'\bwhat\s+is\s+(?:bmc|black\s+millennial\s+caf)\b',
     ]
     is_general_pattern = any(re.search(pat, lower) for pat in general_patterns)
     has_buy_action = any(tok in lower for tok in ["buy", "purchase", "price of", "how much is", "show products", "show books", "catalog", "shop", "order"])
@@ -1001,14 +1003,28 @@ def handle_message(
     enriched_query = intent_data.get("enriched_query") or message
     product_type_hint = intent_data.get("product_type_hint")
 
+    # Normalize product_type_hint to actual stored types in the vector store.
+    # The LLM may return values like 'consultancy', 'services & programs', 'ecommerce'
+    # but the vector store uses: 'assessment', 'resource', 'services'
+    TYPE_HINT_MAP = {
+        "resource": "resource",
+        "consultancy": None,       # no 'consultancy' type exists — skip filter
+        "ecommerce": None,         # no 'ecommerce' type — skip filter
+        "services & programs": "services",
+        "services": "services",
+        "assessment": "assessment",
+    }
+    normalized_type_hint = TYPE_HINT_MAP.get(product_type_hint.lower().strip(), None) if product_type_hint else None
+
     # Build filters from intent + explicit overrides
     smart_filters: Dict[str, Any] = dict(filters or {})
     if intent_data.get("price_min") is not None:
         smart_filters.setdefault("min_price", intent_data["price_min"])
     if intent_data.get("price_max") is not None:
         smart_filters.setdefault("max_price", intent_data["price_max"])
-    if product_type_hint:
-        smart_filters.setdefault("product_type", product_type_hint)
+    # Only apply product_type filter if we have a valid normalized type
+    if normalized_type_hint:
+        smart_filters.setdefault("product_type", normalized_type_hint)
     # Merge any regex-parsed price filters
     regex_filters = _parse_price_filters(message)
     for fk, fv in regex_filters.items():
